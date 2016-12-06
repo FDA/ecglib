@@ -1,0 +1,68 @@
+/*!
+  \page core
+
+  The core functionality of the library mainly describes:
+   - ecgdata
+   - pointmap
+   - property
+   - ecgheader
+
+  \section ecgdata
+  The main core class is the @ref ecglib::ecgdata class, which is essentially a wrapper around an armadillo matrix. In addition, the ecgdata class stores information about ecg properties as well as sampling rate, resolution and annotations. Of note, most commonly annotations are stored outside the ecgdata object and at the moment resolution is not respected in most classes and is most cases assumed to be in uV.
+
+  It is also worth noting that the data is internally stored in a column-based matrix, where each column represents a different lead (all at same sampling and amplitude resolution). Each column can be identified with a lead name or not.
+
+  This leads to the following class diagram of the main data stored in the ecgdata class:
+  \dot
+  digraph example {
+  ecgdata [ label=<
+  <table border="0" cellborder="1" cellspacing="0">
+  <tr><td>ecgdata</td></tr>
+  <tr><td align="left"><font point-size="8">data : arma::mat<br align="left"/>properties : map(string, property) <br align="left"/>leadnames : bimap(int, ecglead) <br align="left"/>annotations : pointmap<br align="left"/>fs : int<br align='left'/></font></td></tr>
+  </table>
+  > shape=none margin=0 URL="\ref ecglib::ecgdata"];
+  properties [ label =<
+  <table border="0" cellborder="1" cellspacing="0">
+  <tr><td>properties</td></tr>
+  <tr><td align="left"><font point-size="8">map(string, property) <br align="left"/></font></td></tr>
+  </table>
+  > shape=none margin=0 ];
+  leadmap [ label =<
+  <table border="0" cellborder="1" cellspacing="0">
+  <tr><td>leadmap</td></tr>
+  <tr><td align="left"><font point-size="8">bimap(int, ecglead) <br align="left"/></font></td></tr>
+  </table>
+  > shape=none margin=0 ];
+  pointmap [ label =<
+  <table border="0" cellborder="1" cellspacing="0">
+  <tr><td>pointmap</td></tr>
+  <tr><td align="left"><font point-size="8">map(int, annotationset) <br align="left"/></font></td></tr>
+  </table>
+  > shape=none margin=0 URL="\ref ecglib::pointmap"];
+  annotationset [ label =<
+  <table border="0" cellborder="1" cellspacing="0">
+  <tr><td>annotationset</td></tr>
+  <tr><td align="left"><font point-size="8">map(int, annotation) <br align="left"/></font></td></tr>
+  </table>
+  > shape=none margin=0 URL="\ref ecglib::annotationset"];
+  ecgdata -> properties ;
+  ecgdata -> pointmap ;
+  ecgdata -> leadmap ;
+  pointmap -> annotationset ;
+  }
+  \enddot
+
+  \section pointmap
+  The @ref ecglib::pointmap is a map or a map, where the first map is a map between column number in the ecgdata matrix and the @ref ecglib::annotationset (a map between location and @ref ecglib::annotation). Each annotation contains the time location in ms, and contains the annotation type as well as subtype. Annotation types are RPEAK, QON, etc and subtype is mainly for RPEAKs to denote what type of beat it is.
+
+  Of note, the map includes an element for lead -1 which is the GLOBAL lead. A negative number was used as there cannot be negative number columns in the data matrix and the definition of GLOBAL is not absolute.
+
+  \section property
+  Ecgdata classes also allow for storing properties which is intended to store information such as recording time, recording device, gender etc as a map between a string and a @ref ecglib::property. In addition, boost program_options can be converted back/forward to properties to be stored in ecgdata.
+
+  \section ecgheader
+  The @ref ecglib::ecgheader class is a general ecg header class used for dealing with binary files such as ishne, but this class is not uniformly and consistently used at the moment.
+
+  \section others
+  The other core features include functions to compute median beat, global annotations (based on operators), estimate signal based on median beat etc.
+*/
