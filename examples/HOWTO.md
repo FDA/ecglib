@@ -56,7 +56,7 @@ ecglib library and examples were compiled with g++ version 4.8.4 from [GCC, the 
 
 * csvtool is required by delineateall.sh script.
 * To generate statistical analysis reports
-  * R 3.2.3 or later
+  * R 3.3.x or later
   * Check .R and .Rmd files for additional R packages required to generate the statistical analysis reports (e.g. tidyverse, lme4, lsmeans, pander, BlandAltmanLeh, ggExtra, gridExtra and dependencies)
 
 ## REFERENCES
