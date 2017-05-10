@@ -23,7 +23,7 @@ The spurious and misplaced Tpeak and Tend annotations obtained when non filterin
 |:---------------:|:--------------:|
 |![ER no-filtered ECG](jaha-NOfiltered.png "ER from delineating the no-filtered signal")|![ER filtered ECG](jaha-Filtered.png "ER from delineating the filtered signal")|
 
-## Bland-Altmant plots of changes from baseline
+## Bland-Altman plots of changes from baseline
 
 Filtering the signal reproduces the results reported in [Johannesen et al PLoS One 2016](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5201230/). However, not filtering the ECG does not reproduce the semi-automatic (reference) annotations. Figures below reproduce [Figure 3](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5201230/figure/pone.0166925.g003/) in [Johannesen et al PLoS One 2016](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5201230/) for annotations from no-filtered (top) and filtered ECG signals (bottom), where red dashed lines show the standard deviation and the dashed black lines the 95% condifence intervals.
 
