@@ -1,0 +1,110 @@
+---
+title: "Impact of filtering on T-wave delineation"
+author: "Jose Vicente <Jose.VicenteRuiz@fda.hhs.gov>"
+date: "May 2017"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=8, fig.height=8, 
+                      echo=TRUE, warning=FALSE, message=FALSE,error=FALSE)
+```
+
+
+**Disclaimer**
+
+This code does not necessarily reflect any position of the Government or the Food and Drug Administration.
+
+This software and documentation (the "Software") were developed at the Food and Drug Administration (FDA) by employees of the Federal Government in the course of their official duties. Pursuant to Title 17, Section 105 of the United States Code, this work is not subject to copyright protection and is in the public domain. Permission is hereby granted, free of charge, to any person obtaining a copy of the Software, to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software or derivatives, and to permit persons to whom the Software is furnished to do so. FDA assumes no responsibility whatsoever for use by other parties of the Software, its source code, documentation or compiled executables, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic. Further, use of this code in no way implies endorsement by the FDA or confers any advantage in regulatory decisions. Although this software can be redistributed and/or modified freely, we ask that any derivative works bear some notice that they are derived from it, and any modified versions bear some notice that they have been modified.
+
+#Abstract
+This script calls the T-wave delineator example with and without enabling the filter for the same ECG. Then it generates plots comparing the signals and first derivative used by the T-wave delineator. Clinical data and ECGs of this FDA's prospective clinical study (NCT01873950) are available at https://physionet.org/physiobank/database/ecgrdvq/.
+
+#Load libraries and declare utility functions
+
+```{r setup, message=FALSE, warning=FALSE}
+############################################################################
+#Load required libraries
+############################################################################
+
+## Graphics and data wrangling
+library(tidyverse);
+library(pander);
+library(ggplot2);
+library(gridExtra);
+library(ggforce);
+```
+
+```{r runcppcode,results='asis'}
+# Semi-automatic reference annotations
+referenceannotations <- read.csv('dbannotations.csv', as.is = T, stringsAsFactors = F);
+referenceannotations <- referenceannotations %>% mutate(annotator='reference') %>% mutate(PON=ifelse(PON<0,NA,PON),QON=ifelse(QON<0,NA,QON),QOFF=ifelse(QOFF<0,NA,QOFF),TPEAK=ifelse(TPEAK<0,NA,TPEAK),TPPEAK=ifelse(TPPEAK<0,NA,TPPEAK),TOFF=ifelse(TOFF<0,NA,TOFF),ERROR='') %>% select(-PON);
+threshold <- 10
+# Automatic annotations from cpp code
+algorithmannotations <- read.csv('results.csv', as.is = T, stringsAsFactors = F);
+algorithmannotations <- algorithmannotations %>% mutate(TPEAK=ifelse(TPEAK>0,TPEAK,NA),TPPEAK=ifelse(TPPEAK>0,TPPEAK,NA),TEND=ifelse(TEND>0,TEND,NA)) %>% group_by(RECORD,FILTER) %>% mutate(QT=TEND-QON,JTPEAK=TPEAK-QOFF) %>% ungroup() %>% group_by(RECORD) %>% mutate(QTdiff=QT-lag(QT,1),JTPEAKdiff=JTPEAK-lag(JTPEAK,1)) %>% mutate(annotator='algorithm')
+# Differences between filtered and non-filtered automatic annotations
+diffs <- algorithmannotations %>% select(RECORD,QTdiff,JTPEAKdiff) %>% filter(!is.na(QTdiff) & !is.na(JTPEAKdiff) & abs(QTdiff)>threshold & abs(JTPEAKdiff)>threshold) %>% mutate(absQTd=abs(QTdiff),absJTPEAKd=abs(JTPEAKdiff)) %>% arrange(absJTPEAKd)
+
+# Record to delineate
+recordsaffected <- unique(diffs$RECORD)
+for(record in recordsaffected){
+  pandoc.header(record,level=1)
+  cat('\n')
+  cat('\n')
+  refannts <- referenceannotations %>% filter(RECORD==record) %>% select(-RECORD,-EGREFID,-ERROR) %>% rename(Filter=annotator,TEND=TOFF) %>% gather(annotation,location,c(QON,QOFF,TPEAK, TPPEAK, TEND)) 
+  callparams <- algorithmannotations %>% filter(RECORD==record) %>% select(RECORD,RR,QON,QOFF) %>% data.frame() %>% distinct()
+  #No filter
+  system(paste0("./twavedelineatorphysionet --filterecg 0 --vcgmag2file 1 --record ", record," --qon ", callparams$QON, " --qoff ", callparams$QOFF, " --rr ", callparams$RR," > filterexample.csv"))
+  system("mv vcgmag.txt vcgmag_0.txt")
+  #Filter enabled
+  system(paste0("./twavedelineatorphysionet --filterecg 1 --vcgmag2file 1  --record ", record," --qon ", callparams$QON, " --qoff ", callparams$QOFF, " --rr ", callparams$RR," --printheader 0 >> filterexample.csv"))
+  system("mv vcgmag.txt vcgmag_1.txt")
+  
+  signalcolors <- c("V"="#000000","dV50X"="#E69F00");
+  
+  vcgmag0 <- read.csv("vcgmag_0.txt",header = F, skip = 2,stringsAsFactors = F)
+  vcgmag0 <- vcgmag0 %>% mutate(Filter='Filter disabled',numsample=row_number()) %>% rename(V=V1) %>% mutate(dV=V-lag(V,1))
+  vcgmag1 <- read.csv("vcgmag_1.txt",header = F, skip = 2,stringsAsFactors = F)
+  vcgmag1 <- vcgmag1 %>% mutate(Filter='Filter enabled',numsample=row_number()) %>% rename(V=V1) %>% mutate(dV=V-lag(V,1))
+  signals <- bind_rows(vcgmag0,vcgmag1) %>% select(numsample,V,dV,Filter) %>% mutate(dV50X=dV*100) %>% gather(param,value,c(V,dV,dV50X))
+  #Merge annotation values into signals for plotting them later
+  delineationout <- read.csv("filterexample.csv",header = T,stringsAsFactors = F)
+  delineationout <- delineationout %>% mutate(Filter=ifelse(FILTER==0,'Filter disabled','Filter enabled')) %>% select(-FILTER,-ERROR) %>% filter(RECORD==record) %>% gather(annotation,location,c(QON,QOFF,TPEAK, TPPEAK, TEND)) %>% mutate(location=ifelse(location<0,NA,location)) %>% select(Filter, annotation,location)
+  annots <- bind_rows(refannts,delineationout)
+  pfullnofiltered <- ggplot() + geom_line(data=signals %>% filter(param=='V' & Filter=='Filter disabled'),aes(numsample,value,color=param)) + scale_y_continuous(limits = c(-500,1500),oob=scales::rescale_none) + geom_vline(data=annots %>% filter(is.element(Filter,c('reference','Filter disabled'))),aes(xintercept = location,linetype=Filter)) + theme_bw() + ggtitle('Filter disabled') + theme(legend.position = 'none') + scale_color_manual(values=signalcolors)
+  
+  pfullfiltered <- ggplot() + geom_line(data=signals %>% filter(param=='V' & Filter=='Filter enabled'),aes(numsample,value,color=param)) + scale_y_continuous(limits = c(-500,1500),oob=scales::rescale_none) + geom_vline(data=annots %>% filter(is.element(Filter,c('reference','Filter enabled'))),aes(xintercept = location,linetype=Filter)) + theme_bw() + ggtitle('Filter enabled') + theme(legend.position = 'none') + scale_color_manual(values=signalcolors)
+  
+  pnofiltered <- ggplot() + geom_line(data=signals %>% filter(param!='dV' & Filter=='Filter disabled'),aes(numsample,value,color=param)) + scale_y_continuous(limits = c(-500,600),oob=scales::rescale_none) + geom_vline(data=annots %>% filter(is.element(Filter,c('reference','Filter disabled'))),aes(xintercept = location,linetype=Filter)) + theme_bw() + theme(legend.position = 'bottom')  + facet_zoom(x=is.element(annotation,c('QOFF','TEND'))) + scale_color_manual(values=signalcolors)
+  
+  pfiltered <- ggplot() + geom_line(data=signals %>% filter(param!='dV' & Filter=='Filter enabled'),aes(numsample,value,color=param)) + scale_y_continuous(limits = c(-500,600),oob=scales::rescale_none) + geom_vline(data=annots %>% filter(is.element(Filter,c('reference','Filter enabled'))),aes(xintercept = location,linetype=Filter)) + theme_bw() + theme(legend.position = 'bottom')  + facet_zoom(x=is.element(annotation,c('QOFF','TEND'))) + scale_color_manual(values=signalcolors)
+  
+  grid.arrange(arrangeGrob(pfullnofiltered,pfullfiltered,nrow=1),arrangeGrob(pnofiltered,pfiltered,nrow=1),heights=c(0.35,0.65))
+  cat('\n')
+  cat('\n')
+  pandoc.table(annots %>% spread(annotation,location)%>% select(Filter,QON,QOFF,TPEAK,TPPEAK,TEND)) 
+  cat('\n')
+  cat('\n')
+  if(examplerecord==record){
+    figurename <- 'FilterEffectExample.png'
+    p <- png(figurename,width=400,height=400)
+    grid.arrange(arrangeGrob(pfullnofiltered,pfullfiltered,nrow=1),arrangeGrob(pnofiltered,pfiltered,nrow=1),heights=c(0.35,0.65))
+    p<-dev.off()
+  }
+}
+```
+
+# Appendix: R session technical information
+
+```{r techinfo}
+sessionInfo()
+```

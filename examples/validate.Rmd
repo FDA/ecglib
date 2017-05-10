@@ -1,0 +1,77 @@
+---
+title: "Validation of T-wave delineation algorithm output in FDA Study 1"
+author: "Jose Vicente <Jose.VicenteRuiz@fda.hhs.gov>"
+date: "May 2016"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=5, fig.height=5, 
+                      echo=TRUE, warning=FALSE, message=FALSE,error=FALSE)
+```
+
+
+**Disclaimer**
+
+This code does not necessarily reflect any position of the Government or the Food and Drug Administration.
+
+This software and documentation (the "Software") were developed at the Food and Drug Administration (FDA) by employees of the Federal Government in the course of their official duties. Pursuant to Title 17, Section 105 of the United States Code, this work is not subject to copyright protection and is in the public domain. Permission is hereby granted, free of charge, to any person obtaining a copy of the Software, to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software or derivatives, and to permit persons to whom the Software is furnished to do so. FDA assumes no responsibility whatsoever for use by other parties of the Software, its source code, documentation or compiled executables, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic. Further, use of this code in no way implies endorsement by the FDA or confers any advantage in regulatory decisions. Although this software can be redistributed and/or modified freely, we ask that any derivative works bear some notice that they are derived from it, and any modified versions bear some notice that they have been modified.
+
+#Abstract
+This script compares the values obtained by the T-wave delineator algorithm version 1.0.0 in FDA Study 1 (validation.csv) vs. the output produced with the automatic T-wave delineator examples publicly available (results.csv). Clinical data and ECGs of FDA Study 1 (clinical study NCT01873950) are available at https://physionet.org/physiobank/database/ecgrdvq/.
+
+```{r setup, message=FALSE, warning=FALSE}
+############################################################################
+#Load required libraries
+############################################################################
+
+## Graphics and data wrangling
+library(tidyverse);
+library(pander);
+```
+
+```{r loadata}
+validation <- read.csv('validation.csv', as.is = T, stringsAsFactors = F);
+results <- read.csv('results.csv', as.is = T, stringsAsFactors = F);
+fulldataset <- bind_rows(validation %>% mutate(dataset='validation'), results %>% mutate(dataset='results'))
+fulldataset <- fulldataset %>% mutate(ContainsError=(ERROR!=''))
+```
+
+# Summary statistics of comparisons
+
+There are 5223 ECG records with median beats in the database. 
+
+Table below shows the number of ECG records with and without errors in the validation and results files.
+
+```{r summarystatistics, results='asis'}
+numecgs <- fulldataset %>% group_by(dataset,FILTER,ContainsError) %>% summarise(NumECGs=n()) %>% spread(dataset,NumECGs) %>% filter(!is.na(FILTER))
+
+pandoc.table(numecgs,split.table=Inf, caption='Number of ECG recors with/without errors')
+```
+
+Table below enumerates  ECG records for which the T-wave delineator trigger an error.
+
+```{r ecgswitherrors, results='asis'}
+ecgswitherrors <- fulldataset %>% filter(ContainsError) %>% select(RECORD,ERROR,FILTER,dataset) %>% spread(dataset,ERROR)
+
+pandoc.table(ecgswitherrors,split.table=Inf, caption='ECG records resulting in T-wave delineator errors')
+```
+
+
+Table below shows annotations that were different between the validation.csv file and the result.csv generated when running the T-wave delineator example for all ECGs in the database.
+
+```{r summaryofdifferences, results='asis'}
+diffsbydataset <- fulldataset %>% gather(param,value,c(RR,QON,RPEAK,QOFF,TPEAK,TPPEAK,TEND)) %>% spread(dataset,value) %>% group_by(RECORD,FILTER) %>% mutate(difference=validation-results) %>% ungroup() %>% data.frame()
+
+measureswithdifferences <- diffsbydataset %>% filter(difference!=0)
+
+pandoc.table(measureswithdifferences,split.table=Inf, caption=paste0('There were ', nrow(measureswithdifferences), ' annotations with different results (difference=validation-results)'))
+```

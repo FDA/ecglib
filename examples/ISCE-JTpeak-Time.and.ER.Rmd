@@ -1,0 +1,429 @@
+---
+title: "ISCE J-Tpeak initiative template report example"
+author: "Jose Vicente <Jose.VicenteRuiz@fda.hhs.gov>"
+date: "February 2016 (minor updates on May 2017)"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=5, fig.height=5, 
+                      echo=TRUE, warning=FALSE, message=FALSE,error=FALSE)
+```
+
+
+**Disclaimer**
+
+This code does not necessarily reflect any position of the Government or the Food and Drug Administration.
+
+This software and documentation (the "Software") were developed at the Food and Drug Administration (FDA) by employees of the Federal Government in the course of their official duties. Pursuant to Title 17, Section 105 of the United States Code, this work is not subject to copyright protection and is in the public domain. Permission is hereby granted, free of charge, to any person obtaining a copy of the Software, to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software or derivatives, and to permit persons to whom the Software is furnished to do so. FDA assumes no responsibility whatsoever for use by other parties of the Software, its source code, documentation or compiled executables, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic. Further, use of this code in no way implies endorsement by the FDA or confers any advantage in regulatory decisions. Although this software can be redistributed and/or modified freely, we ask that any derivative works bear some notice that they are derived from it, and any modified versions bear some notice that they have been modified.
+
+#Abstract
+This script was written for ISCE 2017 J-Tpeak initiative and it is based on previous analysis published in Vicente et al JAHA 2015 (https://doi.org/10.1161/JAHA.114.001615). This script generates time-profile and exposure-response plots for J-Tpeak measures assessed on ECGs from FDA's prospective clinical study NCT01873950. Clinical data and ECGs of this study are available at http://thew-project.org/Database/E-OTH-12-5232-020.html and https://physionet.org/physiobank/database/ecgrdvq/.
+
+#Load libraries and declare utility functions
+
+```{r packageload, message=FALSE, warning=FALSE}
+############################################################################
+#Load required libraries
+############################################################################
+
+## Graphics and data wrangling
+library(tidyverse);
+library(pander);
+library(ggplot2);
+library(gridExtra);
+
+## Model fitting
+library(lme4);
+
+## Estimation of model parameter p-values and CI
+library(pbkrtest);
+
+## Estimation of double deltas (e.g. ddJTpeakc) by contrasts
+library(lsmeans);
+
+## Summary function for using dplyr::summarize_(). 
+my.sum.fun<-funs(mean   = mean(. ,na.rm=T),
+                 median = median(. , na.rm=T),
+                 min    = min(. ,na.rm=T),
+                 max    = max(. ,na.rm=T),
+                 sd     = sd(. ,na.rm=T), 
+                 n      = sum(!is.na(.)),
+                 se     = sd(. ,na.rm=T)/sqrt(sum(!is.na(.))),
+                 LCL    = mean(. ,na.rm=T)+qnorm(0.05)*(sd(. ,na.rm=T)/sqrt(sum(!is.na(.)))),
+                 UCL    = mean(. ,na.rm=T)+qnorm(0.95)*(sd(. ,na.rm=T)/sqrt(sum(!is.na(.)))))
+
+## Color palette for plots
+treatmentcolors <- c("Dofetilide"="#999999","Quinidine"="#E69F00","Ranolazine"= "#56B4E9","Verapamil"="#009E73", "Placebo"="#000000");
+```
+
+#Load and prepare the data for analysis
+
+## Load data from Physionet
+
+Load data set from https://physionet.org/physiobank/database/ecgrdvq/SCR-002.Clinical.Data.csv and prepare data.frame variables for analysis.
+
+```{r loaddata}
+## Load dataset. This line can be edited to load a local copy of the csv file instead. (e.g.: use 'dataset/SCR-002.Clinical.Data.csv' in read.csv)
+study1data <- read.csv('https://physionet.org/physiobank/database/ecgrdvq/SCR-002.Clinical.Data.csv', as.is = T, stringsAsFactors = F);
+
+## Subset clinical data
+clinicaldata <- study1data %>% select(RANDID,SEX,AGE,VISIT,ARMCD,EXTRT,TPT,BASELINE,PCTEST,PCSTRESN,PCSTRESU,EGREFID) %>% rename(ECGID=EGREFID)
+
+## Scale concentrations as appropriate to avoid potential model convergence issues with lmer later
+clinicaldata <- clinicaldata %>% mutate(PCSTRESN=ifelse(PCTEST!='Verapamil',PCSTRESN/1000,PCSTRESN), PCSTRESU=ifelse(PCTEST=='Dofetilide','ng/mL',ifelse(PCTEST!='Verapamil','ug/mL',PCSTRESU)))
+
+## Populate Placebo PK info with 0 concentration
+clinicaldata <- clinicaldata %>% mutate(PCTEST=ifelse(EXTRT=='Placebo','Placebo',PCTEST), PCSTRESN=ifelse(EXTRT=='Placebo',0,PCSTRESN), PCSTRESU=ifelse(EXTRT=='Placebo','n/a',PCSTRESU))
+
+## Subset ECG data
+physionetdata <- study1data %>% rename(ECGID=EGREFID,JT_VM=JTPEAK) %>% select(ECGID,RR,JT_VM) %>% mutate(JT_II=NA,JT_V5=NA,	BS_FLAG=2,PARTICIPANT='FDA') %>% select(PARTICIPANT,BS_FLAG,ECGID,RR,JT_II,JT_V5,JT_VM) %>% arrange(PARTICIPANT,ECGID)
+```
+
+## Load data from submissions
+
+Load additional datasets from submissions to the J-Tpeak initiative.
+
+```{r loadsubmissions}
+## Populate list of received files
+receviedfiles <- c('submissions/filtered.csv','submissions/nofiltered.csv') # Initialize received files to load additional datasets submitted by participants to the initiative (e.g. with c('submissions/participant1.csv','submissions/participant2.csv'))
+allsubmissionsdata <- NULL
+## Load and merge the data into one data.frame
+for(submission in receviedfiles){
+  ## Load annotations from the submissions
+  submissiondata <- read.csv(submission, as.is = T, stringsAsFactors = F);
+  ## Merge submitted datasets
+  allsubmissionsdata <- bind_rows(allsubmissionsdata,submissiondata)
+}
+## Merge physionet and submitted datasets
+allsubmissionsdata <- bind_rows(physionetdata,allsubmissionsdata)
+
+## Transpose to long format
+allsubmissionsdatalong <- allsubmissionsdata %>% gather(param,value,5:7)
+```
+
+## Heart rate correction
+
+Correct J-Tpeak measures for heart rate effects. In this example we use the model and coefficient published in Johannesen et al. Clin Pharm Ther 2014 (https://doi.org/10.1038/clpt.2013.238).
+
+```{r hrcorrection}
+## Apply heart rate correction
+allsubmissionsdatalonghr <- allsubmissionsdatalong %>% group_by(PARTICIPANT,ECGID) %>% mutate(param=paste0(param,'c'),value=round(value/((RR/1000)^(0.58)),0)) %>% ungroup() %>% data.frame()
+
+## Bind all rows from orignal and hear rate corrected data.frames
+analysisdataset <- bind_rows(allsubmissionsdatalong,allsubmissionsdatalonghr) %>% arrange(PARTICIPANT,ECGID,param)
+```
+
+## Changes from baseline (single deltas: &Delta;)
+
+```{r singledeltas}
+## Merge clinical data with JTpeak measures
+analysisdataset <- merge(clinicaldata,analysisdataset) %>% arrange(RANDID,EXTRT,PARTICIPANT,param,TPT)
+
+## Compute average values
+avganalysisdataset <- analysisdataset %>% group_by(RANDID,EXTRT,PARTICIPANT,param,TPT) %>% mutate(RR=round(mean(RR,na.rm=T),0),value=round(mean(value,na.rm=T),0)) %>% ungroup() %>% select(-ECGID) %>% distinct()
+
+## Subset baseline rows
+baselinedata <- avganalysisdataset %>% filter(BASELINE=='Y') %>% select(RANDID,EXTRT,PARTICIPANT,param,value) %>% rename(BL=value) 
+
+## Merge BL measures with no-baseline rows in analysisdataset
+singledeltasdataset <- merge(avganalysisdataset %>% filter(BASELINE!='Y'),baselinedata,by=c('PARTICIPANT','RANDID','EXTRT','param'))
+
+## Compute change from baseline
+singledeltasdataset <- singledeltasdataset %>% mutate(BLCHG=value-BL) %>% select(RANDID,SEX,AGE,VISIT,ARMCD,EXTRT,TPT,PCTEST,PCSTRESN,PCSTRESU,PARTICIPANT,BS_FLAG,RR,param,value,BL,BLCHG)
+
+## Assign factor levels so Placebo can be used as contrast later in the lme models
+singledeltasdataset$EXTRT <-  factor(singledeltasdataset$EXTRT,levels=c('Placebo','Dofetilide','Quinidine Sulph','Ranolazine','Verapamil HCL'),labels=c('Placebo','Dofetilide','Quinidine','Ranolazine','Verapamil'));
+singledeltasdataset$EXTRT <- relevel(singledeltasdataset$EXTRT,ref='Placebo')
+
+## Similarly, assign factors for timepoints so they can be managed by ggplot later
+singledeltasdataset <- singledeltasdataset %>% mutate(TPTN=TPT)
+singledeltasdataset <- singledeltasdataset %>% mutate(TPT=paste0('Time',TPT))
+singledeltasdataset$TPT <- factor(singledeltasdataset$TPT,levels=unique(singledeltasdataset$TPT),ordered=T)
+
+```
+
+## Placebo-corrected changes from baseline (double deltas: &Delta;&Delta;)
+
+```{r doubledeltas}
+## Subset placebo rows
+placebodata <- singledeltasdataset %>% filter(EXTRT=='Placebo') %>% rename(PBORR=RR,PBO=value,PBOBL=BL,PBOBLCHG=BLCHG) %>% select(RANDID,TPT,TPTN,PARTICIPANT,param,PBORR,PBO,PBOBL,PBOBLCHG)
+
+## Merge PBO measures with no-placebo rows in singledeltasdataset
+doubledeltasdataset <- merge(singledeltasdataset %>% filter(EXTRT!='Placebo'),placebodata,by=c('PARTICIPANT','RANDID','TPT','TPTN','param')) 
+
+## Compute placebo corrected change from baseline (double delta)
+doubledeltasdataset <- doubledeltasdataset %>% mutate(DDCHG=BLCHG-PBOBLCHG) %>% select(RANDID,SEX,AGE,VISIT,ARMCD,EXTRT,TPT,TPTN,PCTEST,PCSTRESN,PCSTRESU,PARTICIPANT,BS_FLAG,RR,PBORR,param,value,BL,BLCHG,PBO,PBOBL,PBOBLCHG,DDCHG) %>% arrange(RANDID,EXTRT,TPT,TPTN,PARTICIPANT,param)
+```
+
+# Statistical analysis
+
+## Pharmacodynamic time profiles
+
+```{r dataforexample}
+## Subset data to be analized in this example
+if(!exists('participant')){
+  participant <- 'FDA' # Select participant based on PARTICIPANT column of submitted datasets
+}
+if(!exists('biomarker')){
+  biomarker <- 'JT_VMc' # Select ECG biomarker column
+}
+
+## Initialize data.frame for single-delta analysis
+example.df <- singledeltasdataset %>% filter(PARTICIPANT==participant & param==biomarker) 
+
+## Initialize data.frame foror double-delta analysis
+ddexample.df <- doubledeltasdataset %>% filter(PARTICIPANT==participant & param==biomarker) 
+```
+
+### &Delta; time profile
+
+The code below requires a dataframe with at least the following columns:
+
+* RANDID: Subject identifier
+* EXTRT:  Treatment arm
+* ARMCD:  Treatment sequence
+* VISIT:  Visit number
+* TPT:    Time point
+* BLCHG:  Change from baseline
+
+
+```{r sdtimeanalysis, results='asis'}
+## Set lsm.options to use 'Kenward-Roger' method
+lsm.options(lmer.df = "Kenward-Roger" )
+
+## Fit lme model
+time.fit <- lmer(BLCHG ~ VISIT + ARMCD + TPT + EXTRT + EXTRT:TPT + (1|RANDID) ,data = example.df)
+
+## Get reference grid from the time model
+time.ref.grid <- ref.grid(time.fit,data=time.fit@frame,lsm.options(pbkrtest.limit = nrow(example.df)+1))
+
+## Generate LS-Means estimated of baseline adjusted change (e.g. &Delta;JT-peak) per TPT timepoint and EXTRT treatment
+time.lsm<-lsmeans::lsmeans(time.ref.grid, c("TPT", "EXTRT"))
+
+## Generate (single delta) predictions with CIs
+time.pred<-summary(time.lsm, level=0.95)
+
+## Merge time values back
+time.pred <- merge(time.pred,example.df %>% select(TPT,TPTN) %>% distinct())
+
+## Plot single delta changes
+ggplot(time.pred,aes(TPTN,lsmean,color=EXTRT,ymin=lower.CL, ymax=upper.CL)) + geom_point() + geom_line() + geom_errorbar() + geom_hline(yintercept = 0) + theme_bw() + ggtitle('Changes from baseline') + theme(legend.position = 'bottom',legend.title=element_blank()) + ylab(expression(paste(Delta,"  \u00B1  95% CI (ms)"))) + xlab('Time postdose (hrs)') + scale_color_manual(values=treatmentcolors) + scale_fill_manual(values=treatmentcolors)
+
+```
+
+### &Delta;&Delta; time profile
+
+The code below requires a dataframe with at least the following columns:
+
+* RANDID: Subject identifier
+* EXTRT:  Treatment arm
+* ARMCD:  Treatment sequence
+* VISIT:  Visit number
+* TPT:    Time point
+* DDCHG:  Placebo corrected change from baseline
+
+
+```{r ddtimeanalysis2, results='asis'}
+## Fit lme model
+time.fit.dd <- lmer(DDCHG ~ VISIT + ARMCD + TPT + EXTRT + EXTRT:TPT + (1|RANDID) ,data = ddexample.df)
+
+## Get reference grid from the time model
+time.ref.grid.dd <- ref.grid(time.fit.dd,data=time.fit.dd@frame,lsm.options(pbkrtest.limit = nrow(ddexample.df)+1))  
+
+## Generate LS-Means estimated of placebo corrected change from baseline (e.g. &Delta;&Delta;JT-peak) per TPT timepoint and EXTRT treatment
+time.lsm.dd<-lsmeans::lsmeans(time.ref.grid.dd, c("TPT", "EXTRT"))
+
+## Generate (delta delta) predictions with CIs
+time.pred.dd<-summary(time.lsm.dd, level=0.95)
+
+## Merge time values back
+time.pred.dd <- merge(time.pred.dd,ddexample.df %>% select(TPT,TPTN) %>% distinct())
+
+## Plot double delta changes 
+ggplot(time.pred.dd,aes(TPTN,lsmean,color=EXTRT,ymin=lower.CL, ymax=upper.CL)) + geom_point() + geom_line() + geom_errorbar() + geom_hline(yintercept = 0) + theme_bw() + ggtitle('Placebo corrected changes from baseline') + theme(legend.position = 'bottom',legend.title=element_blank()) + ylab(expression(paste(Delta,Delta," \u00B1  95% CI (ms)")))+ xlab('Time postdose (hrs)') + scale_color_manual(values=treatmentcolors) + scale_fill_manual(values=treatmentcolors) 
+```
+
+## Exposure-response
+
+The exposure-response analysis code below requires a data.frame containing at least the following columns:
+
+* RANDID: Subject identifier
+* EXTRT:  Treatment arm
+* PCSTRESN: Drug concentration
+* PCSTRESU: Drug concentration units
+* DDCHG: Placebo corrected change from baseline
+
+
+### Exposure-response analysis
+
+```{r eranalysis,fig.width=7.5, fig.height=7.5, results='asis'}
+## Fit ER models
+conc.models <- NULL
+conc.preds.dd <- NULL
+for(treatment in unique(ddexample.df$EXTRT)){
+  ## Subset treatment data
+  dchgdf <- ddexample.df %>% filter(EXTRT==treatment)
+  tryCatch({
+    ## Fit model 
+    conc.fit.tmp <- lmer(DDCHG ~ PCSTRESN + (1+PCSTRESN|RANDID) ,data = dchgdf)
+    
+    ## Add model fits to master conc.models data.frame
+    conc.models <- bind_rows(conc.models, data.frame() %>% do(model=conc.fit.tmp) %>% mutate(EXTRT=treatment))
+    
+    ## Estimate changes using fitted model throughout the entire range or observed concentration (i.e. 0 to iCmax)
+    ## Compute individual maximum concentration 
+    iCmax <- max(dchgdf$PCSTRESN,na.rm=T)
+    ## population Cmax
+    pCmax <- (dchgdf %>% group_by(PCSTRESU,RANDID) %>% summarise(iCmax=max(PCSTRESN,na.rm=T)) %>% ungroup() %>% group_by(PCSTRESU) %>% summarise(Cmax=mean(iCmax)) %>% select(Cmax))$Cmax
+    ## Build list of concentrations for predictions (entire range of observed concentration and pCmax)
+    concs.df <- (data.frame(PCSTRESN=c(pCmax,signif(seq(from=0, to =iCmax,length.out=100),3))) %>% mutate(isCmax=PCSTRESN==pCmax) %>% arrange(PCSTRESN))
+    ## Get reference grid from the concentration response model throughout the entire range of observed concentration
+    conc.ref.grid.tmp <- ref.grid(conc.fit.tmp,
+                                  at=list(PCSTRESN=unique(concs.df$PCSTRESN)),
+                                  data=conc.fit.tmp@frame)  
+    
+    ## Generate LS-Means estimated of placebo corrected changes from baseline (e.g. &Delta;&Delta;JT-peak) 
+    conc.lsm.tmp<-lsmeans::lsmeans(conc.ref.grid.tmp, c("PCSTRESN"))
+    ## Generate &Delta;&Delta; mean predictions with CIs
+    tryCatch({
+      conc.pred.tmp<-summary(conc.lsm.tmp, level=0.95)
+      conc.pred.tmp$EXTRT <- treatment
+      conc.pred.tmp <- conc.pred.tmp %>% mutate(isCmax=PCSTRESN==pCmax)
+    }, error = function(e) {
+      cat(paste0('There was an error computing the predictions from the REML model for ', treatment,'.\n'))
+    });
+    ## Add predticted estimates and CIs to master conc.preds.dd data.frame
+    conc.preds.dd <- bind_rows(conc.preds.dd,conc.pred.tmp)
+  }, error = function(e) {
+    cat(paste0('There was an error fitting the model and/or computing the lsmeans for ', treatment,'.\n'))
+  });
+}
+```
+
+### Exposure-response plots
+
+```{r eranalysisplots,fig.width=7.5, fig.height=7.5, results='asis'}
+## Compute means and 95CIs of observed double deltas grouped by concentration deciles (10 bins)
+bin.ecgpk<- ddexample.df %>%
+  filter(!is.na(PCSTRESN)) %>%
+  filter(EXTRT!='Placebo') %>%
+  group_by(EXTRT) %>%
+  mutate(Decile=ntile(PCSTRESN, 10)) %>% 
+  group_by(EXTRT,Decile) %>%
+  summarise_each(my.sum.fun, PCSTRESN, DDCHG) %>% ungroup()
+
+## Select only columns needed for plotting
+plot.bins <- bin.ecgpk %>% 
+  select(EXTRT,Decile,PCSTRESN_min,PCSTRESN_max,PCSTRESN_median) %>%
+  distinct() 
+## Arbitrary values for Y axis range in the plots. Note that observed and predicted values out of the yl range will not be plotted. 
+yl <- c(-10,55)
+## yloc: Y coordinate for horizontal bar showing concentration bins mean values and ranges
+yloc <- -10;
+
+## Compute population's Cmax for each treatment
+Cmaxes <- ddexample.df %>% group_by(EXTRT,PCSTRESU,RANDID) %>% summarise(iCmax=max(PCSTRESN,na.rm=T)) %>% ungroup() %>% group_by(EXTRT,PCSTRESU) %>% summarise(Cmax=mean(iCmax)) %>% select(EXTRT,Cmax,PCSTRESU)
+## Compute DDCHG at Cmax
+ddchgatcmax <- conc.preds.dd %>% filter(isCmax)
+
+## Genarate ER plots
+dd.preds.plots <- list()
+for(treatment in unique(ddexample.df$EXTRT)){
+  ddexample.df.trta <- ddexample.df %>% filter(complete.cases(.),EXTRT==treatment)
+  conc.preds.dd.trta <- conc.preds.dd %>% filter(EXTRT==treatment)
+  bin.ecgpk.trta <- bin.ecgpk  %>% filter(EXTRT==treatment)
+  plot.bins.trta <- plot.bins %>% filter(EXTRT==treatment)
+  Cmaxes.trta <- Cmaxes %>% filter(EXTRT==treatment)
+  
+  dd.preds.plots[[treatment]] <- ggplot()+
+    geom_point(data=ddexample.df.trta, aes(x=PCSTRESN, y=DDCHG, col=EXTRT), alpha=0.2)+ # Print observed dd values
+    geom_ribbon(data=conc.preds.dd.trta, aes(x=PCSTRESN, ymin=lower.CL, ymax=upper.CL,fill=EXTRT), alpha=0.4)+ # Print model's prediction CIs
+    geom_line(data=conc.preds.dd.trta,  aes(x=PCSTRESN, y=lsmean, col=EXTRT), size=1)+ # Print model's predicted mean
+    #geom_pointrange(data=conc.preds.dd.trta %>% filter(isCmax),  aes(x=PCSTRESN, y=lsmean,ymin=lower.CL,ymax=upper.CL), color='black',size=0.5)+ # Print model's predicted mean for Cmax
+    geom_pointrange(data=bin.ecgpk.trta , aes(x=PCSTRESN_median, ymax=DDCHG_UCL, ymin=DDCHG_LCL, y=DDCHG_mean,col=EXTRT),size=0.25)+ # Vertical bars and dots with mean and 95 CIs of observed dd values per concentration decile
+    geom_point(data=plot.bins.trta, y=yloc,aes(x=PCSTRESN_max,col=EXTRT), shape="|", size=3)+ # Vertical segments on horizontal bar with concentration deciles (deciles' upper limits)
+    geom_point(data=plot.bins.trta, y=yloc,aes(x=PCSTRESN_min,col=EXTRT), shape="|", size=3)+  # Vertical segments on horizontal bar with concentration deciles  (deciles' lower limits)
+    geom_line(data=plot.bins.trta, y=yloc,aes(x=PCSTRESN_min,col=EXTRT), size=0.25)+ # Horizontal segments on horizontal bar with concentration deciles (deciles' lower limits)
+    geom_line(data=plot.bins.trta, y=yloc,aes(x=PCSTRESN_max,col=EXTRT), size=0.25)+ # Horizontal segments on horizontal bar with concentration deciles (deciles' upper limits)
+    geom_point(data=plot.bins.trta, y=yloc,aes(x=PCSTRESN_median,col=EXTRT), size=1)+ # Median value dots on horizontal bar with concentration deciles
+    ylab(expression(paste(Delta,Delta," \u00B1  95% CI (ms)")))+ # Y axis label
+    xlab(paste0(treatment,' (',unique(ddexample.df.trta$PCSTRESU),')'))+ # Set x axis label
+    scale_y_continuous(limits=yl,oob=scales::rescale_none) + # Y axis range
+    scale_color_manual(values=treatmentcolors) + scale_fill_manual(values=treatmentcolors) + # Set treatment colors
+    geom_hline(data=plot.bins.trta,aes(yintercept=10), linetype=3)+ # Horizontal doted line at 10 ms
+    geom_hline(data=plot.bins.trta,aes(yintercept=0), linetype=2)+ # Horizontal dashed line at 0 ms
+    geom_vline(data=Cmaxes.trta,aes(xintercept=Cmax))+ # Vertical line showing treatment Cmax
+    theme_bw() +
+    theme(legend.position="none",legend.title=element_blank())+
+    ggtitle(treatment)
+}
+
+## Print plots
+grid.arrange(dd.preds.plots$Dofetilide,dd.preds.plots$Quinidine,
+             dd.preds.plots$Ranolazine,dd.preds.plots$Verapamil,
+             ncol=2)
+```
+
+**Figure 1**: Exposure-response plots for each treatment. Mean baseline- and placeb-corrected plasma drug concentration-dependent changes. Shaded areas show the 95% confidence intervals from model predictions. Observed data is shows as shaded dots. For clarity, observed data is grouped in 10 bins (deciles) represented by the solid circles (median concentration and mean &Delta;&Delta;ECG change), vertical error bars (95% confidence intervals of &Delta;&Delta;ECG change) and horizontal error bars (observed plasma drug concentration deciles). Horizontal lines correspond with &Delta;&Delta; = 0 ms (dashed horizontal line) and &Delta;&Delta; = 10ms (dotted horizontal line). The solid vertical line shows Cmax (vales reported in the table in next section).
+
+
+
+#### Cmax and corresponding &Delta;&Delta; changes per treatment
+
+Table with Cmax values for each treatment (solid vertical line in the exposure-response plots above) and corresponding predicted &Delta;&Delta; changes (mean and [95% confidence intervals])
+
+```{r printcmaxtable, results='asis'}
+Cmaxtable <- Cmaxes %>% mutate(Cmax=sprintf('%.1f %s',round(Cmax,2),PCSTRESU)) %>% select(-PCSTRESU)
+ddchgtable <- ddchgatcmax %>% mutate(DDCHG=sprintf('%.1f [%.1f to %.1f] ms',round(lsmean,1),round(lower.CL,1),round(upper.CL,1))) 
+Cmaxtable <- merge (Cmaxtable,ddchgtable %>% select(EXTRT,DDCHG))
+## Print Cmax table
+pandoc.table(Cmaxtable)
+```
+
+## JAHA manuscript Figure 3 panel K
+
+This plot is similar to that in Figure 3.k in Vicente et al. JAHA 2015 (https://doi.org/10.1161/JAHA.114.001615).The plot shows all panels above together. This is done by rescaling the corresponding X axis to % of Cmax for each treatment (see code below and Vicente et al. for more information.)
+
+```{r jahalikefigure, results='asis'}
+## Normalize concentrations to population's Cmax
+## Merge Cmaxes to the predicted double deltas data.frame and compute normalized concentration to Cmax (CONCnorm)
+jaha_ddchgpreds <- merge(conc.preds.dd,Cmaxes %>% select(-PCSTRESU))  %>% group_by(EXTRT) %>% mutate(CONCnorm=PCSTRESN/max(Cmax,na.mr=T)*100)
+
+## Generate exposure-response plot
+jaha.plot.ddCHG <-ggplot()+
+  geom_ribbon(data=jaha_ddchgpreds, aes(x=CONCnorm, ymin=lower.CL, ymax=upper.CL,fill=EXTRT), alpha=0.4)+ # Print model's prediction CIs
+  geom_line(data=jaha_ddchgpreds,  aes(x=CONCnorm, y=lsmean, col=EXTRT, linetype=EXTRT), size=1)+ # Print model's predicted mean
+  geom_hline(aes(yintercept=10), linetype=3)+ # Horizontal doted line at 10 ms
+  geom_hline(aes(yintercept=0), linetype=2)+ # Horizontal dashed line at 0 ms
+  geom_vline(aes(xintercept=100), linetype=1)+ # Vertical line at Cmax (i.e. 100%)
+  ylab(expression(paste(Delta,Delta," \u00B1  95% CI (ms)")))+ # Y axis label
+  xlab ('% of population\'s Cmax concentration')+ # X axis label
+  scale_color_manual(values=treatmentcolors) + scale_fill_manual(values=treatmentcolors) + # Set treatment colors
+  theme_bw() +
+  theme(legend.position="bottom",legend.title=element_blank())
+
+## Print plot
+print(jaha.plot.ddCHG + scale_y_continuous(limits=yl,oob=scales::rescale_none))
+
+figurename <- paste0('jaha-',participant,'.png')
+p <- png(figurename,width=250,height=250)
+print(jaha.plot.ddCHG + scale_y_continuous(limits=yl,oob=scales::rescale_none))
+p<-dev.off()
+```
+
+**Figure 2**: Zoomed-in version of Figure 3.K in Vicente et al JAHA 2015.
+
+# Appendix: R session technical information
+
+```{r techinfo}
+sessionInfo()
+```

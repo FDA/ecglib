@@ -1,5 +1,23 @@
 # ecglib - C++ library for processing and analysis of electrocardiograms (ECGs)
 
+## SETUP
+
+To download and build ecglib and documentation:
+
+1. Clone ecglib repository
+```
+git clone https://github.com/FDA/ecglib.git
+```
+2. Build ecglib documentation
+```
+cd ecglib
+cd ecglib
+mkdir build
+cd build
+cmake ..
+make doc
+```
+3. Open *html/index.html* with your web browser and follow installation instructions in the documentation.
 
 ## LICENSE
 

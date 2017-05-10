@@ -1,5 +1,6 @@
 # ecglib - C++ library for processing and analysis of electrocardiograms (ECGs)
 
+See [ecglib/README.md](ecglib/README.md) for library information and setup. The [examples](examples) directory contains examples of use of the T-wave delineator.
 
 ## LICENSE
 
@@ -17,3 +18,6 @@ ecglib software and documentation were developed by the authors in their capacit
 
 FDA assumes no responsibility whatsoever for use by other parties of the Software, its source code, documentation or compiled executables, and makes no guarantees, expressed or implied, about its quality, reliability, or any other characteristic.  Further, FDA makes no representations that the use of the Software will not infringe any patent or proprietary rights of third parties.   The use of this code in no way implies endorsement by the FDA or confers any advantage in regulatory decisions.
 
+## REFERENCES
+
+Johannesen L, Vicente J, Hosseini M, Strauss DG. [Automated Algorithm for J-Tpeak and Tpeak-Tend Assessment of Drug-Induced Proarrhythmia Risk](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5201230/). PLoS One. 2016; 11(12): e0166925. doi: 10.1371/journal.pone.0166925.

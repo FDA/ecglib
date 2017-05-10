@@ -5,10 +5,10 @@
  * @author Meisam Hosseini <meisam.hosseini@fda.hhs.gov>
  * @author Lars Johannesen <lars.johannesen@fda.hhs.gov>
  *
- * @version 1.0.0
+ * @version 1.1.0
  *
  * @section LICENSE
- * twavedelineatorphysionet example code is in the public domain within the United States, and copyright and related rights in the work worldwide are waived through the CC0 1.0 Universal Public Domain Dedication. This example is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See DISCLAIMER section and https://www.gnu.org/licenses/gpl-faq.html for more details.
+ * twavedelineatorphysionet example code is in the public domain within the United States, and copyright and related rights in the work worldwide are waived through the CC0 1.0 Universal Public Domain Dedication. This example is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See DISCLAIMER section below, https://github.com/FDA/ecglib/, https://creativecommons.org/publicdomain/zero/1.0/ and https://www.gnu.org/licenses/gpl-faq.html for more details.
  *
  * @section DISCLAIMER
  * This software and documentation were developed by the authors in their capacities as  Oak Ridge Institute for Science and Education (ORISE) research fellows at the U.S. Food and Drug Administration (FDA).
@@ -22,17 +22,26 @@
  *      - QRS onset, R peak and QRS offset annotations in the median beat.
  *      - Average RR interval in ms for the 10 second ECG strip from which the median beat was derived.
  * Arguments:
- *      - record    : ECG record
- *      - qon       : QRS onset in ms
- *      - rpeak     : R peak in ms
- *      - qoff      : QRS offset in ms
- *      - rr        : Mean RR in ms
+ *      - record    	: ECG record
+ *      - qon       	: QRS onset in ms
+ *      - rpeak     	: R peak in ms
+ *      - qoff      	: QRS offset in ms
+ *      - rr        	: Mean RR in ms
+ *	- printheader	: If true then print header row with column names to standard output
+ *	- filterecg	: If true then filter the ECG with a 5th order butterworth filter before calling the T-wave delineator
+ *	- vcgmag2file	: If true then export vector magnitude lead delineated by the T-wave delineator to text file
  *
  *
  */
 
+//Prevent armadillo to print errors in standard output
+#define ARMA_DONT_PRINT_ERRORS
+
 #include <ecglib.hpp>
 #include <ecglib/delineator/twave.hpp>
+
+//Include filtering library
+#include "filters/butterworth/filter.hpp"
 
 //Include WFDB Library
 #include <wfdb/wfdb.h>
@@ -48,8 +57,6 @@
 #include <cmath>
 #include <sstream>
 #include <cstdlib>
-#include <stdexcept>
-#include <vector>
 #include <map>
 
 //Include Boost
@@ -59,7 +66,6 @@
 #include <boost/tokenizer.hpp>
 #include <boost/bimap.hpp>
 #include <boost/assign.hpp>
-
 
 
 using namespace ecglib;
@@ -85,6 +91,7 @@ void load_physionet(ecgdata &e, const char *rec);
 
 int main(int argc, char **argv) {
     try{
+	// Program options
         boost::program_options::options_description generic("T-wave delineator command line options");
         generic.add_options()
                 ("help,h", "print this help")
@@ -93,7 +100,9 @@ int main(int argc, char **argv) {
                 ("rpeak",boost::program_options::value<int>()->default_value(350),"R peak in ms")
                 ("qoff",boost::program_options::value<int>()->default_value(392),"QRS offset in ms")
                 ("rr",boost::program_options::value<double>()->default_value(808),"mean RR interval in ms")
-                ("vcgmag2file",boost::program_options::value<bool>()->default_value(false),"Export vector magnitude lead to text file");
+		("printheader",boost::program_options::value<bool>()->default_value(true),"Flag to print header to standard output")
+		("filterecg",boost::program_options::value<bool>()->default_value(true),"If true then filter the ECG with a 5th order butterworth filter before calling the T-wave delineator")
+                ("vcgmag2file",boost::program_options::value<bool>()->default_value(false),"Export vector magnitude lead delineated by the T-wave delineator to text file");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(boost::program_options::parse_command_line(argc, argv, generic), vm);
@@ -111,7 +120,16 @@ int main(int argc, char **argv) {
         int rpeak =  vm["rpeak"].as<int>();
         int qoff =  vm["qoff"].as<int>();
         double rr =  vm["rr"].as<double>();
+	bool printheader = vm["printheader"].as<bool>();
+	bool filterecg = vm["filterecg"].as<bool>();
         bool vcgmag2file =  vm["vcgmag2file"].as<bool>();
+
+	if (printheader){
+		std::cout << "RECORD,ERROR,FILTER,RR,QON,RPEAK,QOFF,TPEAK,TPPEAK,TEND" << std::endl;
+	}
+
+	// Initialize error mesage to empty string
+	std::string errormsg = "Unknown error";
 
         //ecg variable
         ecgdata ecg;
@@ -123,12 +141,26 @@ int main(int argc, char **argv) {
         arma::mat data = ecg.data()*1000.0;
         ecg.data() = data;
 
+	// Preprocessing and filtering methods were not released with ecglib 1.0.0.
+	// We have released a small library to perform the filtering required by step#1 in twaveDelineator.cpp
+	// This example uses the command line option 'filterecg' to allow for comparison of results with filtering enabled/disabled.
+	if (filterecg) {
+		// Filter ECG before sending it to the T-wave delineator
+		ecglibfilter::filter filterData; // 5th order, with cutoff 25 HZ and not a stop filter, i.e. a lowpass filter
+		filterData(ecg);
+	}
+
         int vcgidx = ecg.leadnum(ecglead::VCGMAG);
 
         if (vcgmag2file){
-            arma::mat ecgsignal = ecg.lead(vcgidx);
-            ecgsignal.save("vcgmag.txt", arma_ascii);
-        }
+            arma::mat vcgmaglead = ecg.lead(vcgidx);
+            vcgmaglead.save("vcgmag.txt", arma_ascii);
+	}
+
+	// Initialize fiducial points values for output
+	int outtpeak = -1;
+	int outtpeakp = -1;
+	int outtend = -1;
 
         // Check ECG sampling frequency is 1000 Hz
         if(ecg.fs() == 1000){
@@ -143,11 +175,7 @@ int main(int argc, char **argv) {
             const ecglib::property prop(typ, rr);
             ecg.setproperty("meanrr", prop);
 
-            int outtpeak = -1;
-            int outtpeakp = -1;
-            int outtend = -1;
-
-            // T-wave delineation
+           // T-wave delineation
             try{
                 // Use T-wave delineator default settings
                 twaveDelineator_config tcfg;
@@ -179,26 +207,28 @@ int main(int argc, char **argv) {
                 }
                 locs.clear();
 
-                std::cout << "RR,QON,RPEAK,QOFF,TPEAK,TPPEAK,TEND" << std::endl;
-                std::cout << rr << "," << qon << "," << rpeak << "," << qoff << "," << outtpeak << "," << outtpeakp << "," << outtend << std::endl;
-            }catch(const std::exception &e){
-                std::string line = std::string("Exception caught in t-wave Delineator: ") + e.what();
-                std::cerr << std::endl << line << std::endl;
-            }catch(const char* e){
-                std::string line = std::string("Exception caught in t-wave Delineator: ") + e;
-                std::cerr << std::endl << line << std::endl;
-            }catch(...){
-                std::string line = std::string("Unknown exception caught in t-wave Delineator");
-                std::cerr << std::endl << line << std::endl;
-            }
+		errormsg = "";
 
+            }catch(const std::exception &e){
+                errormsg = std::string("Exception caught in t-wave Delineator: ") + e.what();
+                std::cerr << std::endl << errormsg << std::endl;
+            }catch(const char* e){
+                errormsg = std::string("Exception caught in t-wave Delineator: ") + e;
+                std::cerr << std::endl << errormsg << std::endl;
+            }catch(...){
+                errormsg = std::string("Unknown exception caught in t-wave Delineator");
+                std::cerr << std::endl << errormsg << std::endl;
+            }
+	    std::cout << record << "," << errormsg << "," << filterecg << "," << rr << "," << qon << "," << rpeak << "," << qoff << "," << outtpeak << "," << outtpeakp << "," << outtend << std::endl;
         } else {
             //else (frequency != 1kHz) report error
+	    errormsg = "Wrong sampling frequency. Sampling frequency of 1000Hz is required.";
+	    std::cout << record << "," << errormsg << "," << filterecg << "," << rr << "," << qon << "," << rpeak << "," << qoff << "," << outtpeak << "," << outtpeakp << "," << outtend << std::endl;
             std::cerr << "** ERROR: " << "Sampling frequency for " << record << " is at " << ecg.fs() << " but 1000 Hz is required." << std::endl;
         } // end if(ecg.fs() == 1000)
 
-        std::cout << std::endl;
         return EXIT_SUCCESS;
+
     }catch(const std::exception &e){
         std::string line = std::string("Exception caught: ") + e.what();
         std::cerr << std::endl << line << std::endl;
