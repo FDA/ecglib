@@ -95,11 +95,11 @@ int main(int argc, char **argv) {
         boost::program_options::options_description generic("T-wave delineator command line options");
         generic.add_options()
                 ("help,h", "print this help")
-                ("record",boost::program_options::value<std::string>()->default_value("ecgrdvq/medians/1001/00ed2097-cd14-4f03-ab33-853da5be5550"),"Physionet record")
-                ("qon",boost::program_options::value<int>()->default_value(297),"QRS onset in ms")
+                ("record",boost::program_options::value<std::string>()->default_value("ecgrdvq/medians/1005/643ee40b-9432-4dbc-9e67-a191c14c4843"),"Physionet record")
+                ("qon",boost::program_options::value<int>()->default_value(302),"QRS onset in ms")
                 ("rpeak",boost::program_options::value<int>()->default_value(350),"R peak in ms")
-                ("qoff",boost::program_options::value<int>()->default_value(392),"QRS offset in ms")
-                ("rr",boost::program_options::value<double>()->default_value(808),"mean RR interval in ms")
+                ("qoff",boost::program_options::value<int>()->default_value(391),"QRS offset in ms")
+                ("rr",boost::program_options::value<double>()->default_value(821),"mean RR interval in ms")
 		("printheader",boost::program_options::value<bool>()->default_value(true),"Flag to print header to standard output")
 		("filterecg",boost::program_options::value<bool>()->default_value(true),"If true then filter the ECG with a 5th order butterworth filter before calling the T-wave delineator")
                 ("vcgmag2file",boost::program_options::value<bool>()->default_value(false),"Export vector magnitude lead delineated by the T-wave delineator to text file");

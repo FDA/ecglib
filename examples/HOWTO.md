@@ -11,7 +11,7 @@ rsync -Cavz physionet.org::ecgrdvq ./ecgrdvq
 2. **Compile** tool to download physionet annotations and t-wave delineator c++ example. Please note that you need to build [ecglib](../ecglib/README.md) library first.
 ```
 g++ -std=c++11 -o getdbannotations getdbannotations.cpp -lboost_program_options -lboost_filesystem -lboost_system -lwfdb
-g++ -std=c++11 -o twavedelineatorphysionet twavedelineatorphysionet.cpp filters/butterworth/butter.cpp -lecglib-core -lecglib-delineators-twave -lboost_program_options -lboost_filesystem -lboost_system -lboost_date_time -lwfdb
+g++ -std=c++11 -o twavedelineatorphysionet twavedelineatorphysionet.cpp -lecglib-core -lecglib-delineators-twave -lboost_program_options -lboost_filesystem -lboost_system -lboost_date_time -lwfdb
 ```
 3. Filter the RECORDS file to build an index of the median beat files
 ```
@@ -41,6 +41,7 @@ Rscript generatereport.R
     * Bland Altman plots summarizing differences between filtered and no-filtered results vs. reference annotations:
       - Reference vs. annotations from filtered ECGs: FDAStudy1Comparison-reference-vs-algorithm-Filtered.html
       - Reference vs. annotations from no-filtered ECGs: FDAStudy1Comparison-reference-vs-algorithm-NO-Filtered.html
+    * Comparison between annotations in validation dataset (validation.csv) vs. those obtained running steps 1 to 7 above (results.csv): validate.html
 
 ## LICENSE
 
