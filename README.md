@@ -1,3 +1,9 @@
+* This repository has been archived and is no longer maintained
+
+* The code is provided for historical reference and may contain unpatched or unknown vulnerabilities
+
+* It should not be used in production systems
+  
 # ecglib - C++ library for processing and analysis of electrocardiograms (ECGs)
 
 See [ecglib/README.md](ecglib/README.md) for library information and setup. The [examples](examples) directory contains examples of use of the T-wave delineator.
